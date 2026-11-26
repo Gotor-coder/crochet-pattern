@@ -1,0 +1,17 @@
+{
+  "name": "코바늘 픽셀 도안",
+  "short_name": "코바늘도안",
+  "description": "이미지를 코바늘 호수와 완성 크기에 맞는 칸 도안으로 바꿔 줍니다.",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f1ec",
+  "theme_color": "#f4f1ec",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

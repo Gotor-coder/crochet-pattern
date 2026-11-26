@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>코바늘 픽셀 도안 만들기</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <meta name="theme-color" content="#f4f1ec" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="코바늘도안" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>🧶 코바늘 픽셀 도안 만들기</h1>
+    <p>이미지를 불러오고 코바늘 호수와 완성 크기를 입력하면 칸 도안(그래프 도안)을 만들어 드려요.</p>
+  </header>
+
+  <div class="layout">
+    <aside class="panel">
+      <section>
+        <h2>1. 이미지</h2>
+        <label id="dropZone" class="drop">
+          <input id="fileInput" type="file" accept="image/*" hidden />
+          <span id="dropText">여기를 눌러 이미지를 고르거나<br />끌어다 놓으세요 (붙여넣기 Ctrl+V 가능)</span>
+          <img id="thumb" alt="" hidden />
+        </label>
+      </section>
+
+      <section>
+        <h2>2. 코바늘 · 뜨개 기법</h2>
+        <label class="field">코바늘 호수
+          <select id="hook"></select>
+        </label>
+        <label class="field">뜨개 기법
+          <select id="stitch"></select>
+        </label>
+        <div class="gauge-box">
+          <div>예상 게이지 (10×10cm): <b id="gaugeText">-</b></div>
+          <label class="check"><input id="customGauge" type="checkbox" /> 내 게이지 직접 입력 (스와치 떠봤다면 추천)</label>
+          <div id="customGaugeFields" class="row2" hidden>
+            <label class="field">10cm 당 코 수<input id="gaugeSts" type="number" min="1" max="60" step="0.5" /></label>
+            <label class="field">10cm 당 단 수<input id="gaugeRows" type="number" min="1" max="60" step="0.5" /></label>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>3. 완성 크기</h2>
+        <div class="row2">
+          <label class="field">가로 (cm)<input id="widthCm" type="number" min="1" max="300" step="0.5" value="30" /></label>
+          <label class="field">세로 (cm)<input id="heightCm" type="number" min="1" max="300" step="0.5" value="30" /></label>
+        </div>
+        <label class="check"><input id="keepRatio" type="checkbox" checked /> 이미지 비율 유지</label>
+      </section>
+
+      <section>
+        <h2>4. 색상</h2>
+        <label class="field">색 개수 <b id="colorCountText">6</b>
+          <input id="colorCount" type="range" min="2" max="20" value="6" />
+        </label>
+        <label class="field inline">투명 부분 배경색 <input id="bgColor" type="color" value="#ffffff" /></label>
+      </section>
+
+      <div id="summary" class="summary">이미지를 불러오면 도안 크기가 여기에 표시돼요.</div>
+      <div id="error" class="error" hidden></div>
+    </aside>
+
+    <main class="workspace">
+      <div class="toolbar">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="chart" role="tab">도안</button>
+          <button class="tab" data-tab="rows" role="tab">단별 순서</button>
+          <button class="tab" data-tab="original" role="tab">원본 비교</button>
+        </div>
+        <div class="tools" id="chartTools">
+          <label>확대 <input id="zoom" type="range" min="4" max="40" value="14" /></label>
+          <label class="check"><input id="showSymbols" type="checkbox" checked /> 기호</label>
+          <label class="check"><input id="showGrid" type="checkbox" checked /> 격자</label>
+          <label class="check"><input id="paintMode" type="checkbox" /> ✏️ 칠하기</label>
+          <button id="undoBtn" disabled>↶ 되돌리기</button>
+          <span class="save-group">
+            <select id="saveFormat" title="저장 형식">
+              <option value="png" selected>PNG</option>
+              <option value="jpeg">JPEG</option>
+            </select>
+            <button id="savePng" class="primary" disabled>저장</button>
+          </span>
+          <button id="printBtn" disabled>인쇄</button>
+        </div>
+      </div>
+
+      <div id="banner" class="banner" hidden></div>
+
+      <div id="tab-chart" class="tabpane">
+        <div id="chartWrap" class="chart-wrap">
+          <div id="empty" class="empty">왼쪽에서 이미지를 불러와 주세요.</div>
+          <canvas id="chart" hidden></canvas>
+        </div>
+        <p class="hint">오른쪽 아래가 1단 1코예요. 빨간 선은 10칸, 진한 선은 5칸마다 그어져 있어요. 아래 색을 누르면 그 색만 강조되고, ✏️칠하기를 켜면 선택한 색으로 칸을 고칠 수 있어요.</p>
+      </div>
+
+      <div id="tab-rows" class="tabpane" hidden>
+        <label class="check"><input id="leftHanded" type="checkbox" /> 왼손잡이 (방향 반대로)</label>
+        <ol id="rowList" class="row-list"></ol>
+      </div>
+
+      <div id="tab-original" class="tabpane" hidden>
+        <div class="compare">
+          <figure><img id="originalImg" alt="원본 이미지" /><figcaption>원본</figcaption></figure>
+          <figure><canvas id="previewCanvas"></canvas><figcaption>도안 미리보기 (실제 코 비율)</figcaption></figure>
+        </div>
+      </div>
+
+      <section class="legend-panel">
+        <div class="legend-head">
+          <h2>사용 색상 <small id="totalText"></small></h2>
+          <div id="mergeBox" class="merge" hidden>
+            <span id="selectedLabel"></span> 을(를)
+            <select id="mergeTarget"></select>
+            <button id="mergeBtn">로 합치기</button>
+            <button id="clearSelect">선택 해제</button>
+          </div>
+        </div>
+        <ul id="legend" class="legend"></ul>
+      </section>
+    </main>
+  </div>
+
+  <img id="printImg" class="print-only" alt="" />
+
+  <script src="js/gauge.js"></script>
+  <script src="js/quantize.js"></script>
+  <script src="js/pattern.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
