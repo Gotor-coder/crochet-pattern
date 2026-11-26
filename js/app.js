@@ -4,7 +4,10 @@
 
   const { HOOKS, STITCHES, estimateGauge, computeGrid } = window.Gauge;
   const { quantizeImage, toHex, hexToRgb, textColorFor } = window.Quantize;
-  const { symbolFor, rowInstructions, countColors, paintCell, mergeColor } = window.Pattern;
+  const {
+    symbolFor, rowInstructions, countColors, mergeColor,
+    circleCells, withMirror, paintCells, mirrorPattern, dropUnusedColors,
+  } = window.Pattern;
   const Render = window.Render;
 
   const DEFAULT_HOOK_MM = 4.0;
@@ -26,6 +29,7 @@
     'undoBtn', 'savePng', 'printBtn', 'chartWrap', 'empty', 'chart', 'leftHanded', 'rowList',
     'originalImg', 'previewCanvas', 'totalText', 'mergeBox', 'selectedLabel', 'mergeTarget',
     'mergeBtn', 'clearSelect', 'legend', 'printImg', 'banner', 'saveFormat', 'detail', 'detailText',
+    'brush', 'symmetry', 'offsetX', 'offsetY', 'offsetXText', 'offsetYText', 'offsetReset',
   ].forEach((id) => { el[id] = $(id); });
 
   let state = {
@@ -104,6 +108,15 @@
     el.colorCount.addEventListener('input', () => { el.colorCountText.textContent = el.colorCount.value; regenerateSoon(); });
     el.detail.addEventListener('input', () => { el.detailText.textContent = detailLabel(el.detail.value); regenerateSoon(); });
     el.detailText.textContent = detailLabel(el.detail.value);
+    el.symmetry.addEventListener('change', regenerateSoon);
+    const onOffset = () => {
+      el.offsetXText.textContent = offsetLabel(el.offsetX.value, '오른쪽', '왼쪽');
+      el.offsetYText.textContent = offsetLabel(el.offsetY.value, '아래', '위');
+      regenerateSoon();
+    };
+    el.offsetX.addEventListener('input', onOffset);
+    el.offsetY.addEventListener('input', onOffset);
+    el.offsetReset.addEventListener('click', () => { el.offsetX.value = '0'; el.offsetY.value = '0'; onOffset(); });
     el.bgColor.addEventListener('input', regenerateSoon);
 
     el.zoom.addEventListener('input', drawChart);
@@ -181,6 +194,11 @@
   }
   const round1 = (n) => Math.round(n * 10) / 10;
   const detailLabel = (v) => (v < 20 ? '약하게' : v < 70 ? '보통' : '강하게');
+  // 슬라이더 값(-50~50) = 칸의 몇 % 만큼 미는지
+  const offsetLabel = (v, plus, minus) => {
+    const n = Number(v);
+    return n === 0 ? '0' : `${n > 0 ? plus : minus} ${Math.abs(n) / 100}칸`;
+  };
 
   // ---------------- 게이지 ----------------
   function currentGauge() {
@@ -207,14 +225,18 @@
     try {
       const gauge = currentGauge();
       const grid = computeGrid(el.widthCm.value, el.heightCm.value, gauge);
-      const { palette, indices } = buildPattern(state.image, grid, {
+      const built = buildPattern(state.image, grid, {
         colors: Number(el.colorCount.value),
         background: hexToRgb(el.bgColor.value),
         detail: Number(el.detail.value) / 100,
+        offsetX: Number(el.offsetX.value) / 100,
+        offsetY: Number(el.offsetY.value) / 100,
       });
+      const mirrored = mirrorPattern({ cols: grid.cols, rows: grid.rows, indices: built.indices }, el.symmetry.value);
+      const { pattern, palette } = dropUnusedColors(mirrored, built.palette);
       const keepEdits = !fresh && state.edited && state.pattern;
       setState({
-        gauge, grid, palette, pattern: { cols: grid.cols, rows: grid.rows, indices },
+        gauge, grid, palette, pattern,
         size: { width: el.widthCm.value, height: el.heightCm.value },
         history: keepEdits ? [...state.history, snapshot()].slice(-HISTORY_LIMIT) : [],
         edited: false, selected: null, doneRows: new Set(),
@@ -239,7 +261,9 @@
     el.zoom.value = String(Math.max(ZOOM_MIN, Math.min(ZOOM_DEFAULT, fit)));
   }
 
-  // 칸 하나 당 원본 픽셀을 여러 개(한 변 4~16개) 읽어서 칸 안의 색 비율을 셈
+  // 칸 하나 당 원본 픽셀을 여러 개(한 변 4~16개) 읽어서 칸 안의 색 비율을 셈.
+  // offsetX/Y(칸 단위 비율)만큼 이미지를 밀어 그려서, 눈 같은 부분이 칸 가운데 오도록 맞출 수 있게 함.
+  // 밀려서 빈 가장자리는 투명 → 배경색으로 처리됨.
   function buildPattern(img, grid, opts) {
     const perCell = Math.max(SAMPLE_PER_CELL_MIN, Math.min(SAMPLE_PER_CELL_MAX,
       Math.floor(Math.sqrt(MAX_WORK_PIXELS / (grid.cols * grid.rows)))));
@@ -250,7 +274,9 @@
     canvas.height = sh;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, 0, 0, sw, sh);
+    const dx = (opts.offsetX || 0) * (sw / grid.cols);
+    const dy = (opts.offsetY || 0) * (sh / grid.rows);
+    ctx.drawImage(img, dx, dy, sw, sh);
     const { data } = ctx.getImageData(0, 0, sw, sh);
     return quantizeImage(data, sw, sh, grid.cols, grid.rows, opts);
   }
@@ -313,15 +339,22 @@
   // ---------------- 칠하기 ----------------
   function bindChart() {
     let drawing = false;
+    const brushSize = () => Number(el.brush.value) || 1;
+    // 1칸 붓은 끌면서 칠하고, 동그라미 붓은 누른 자리에 한 번 찍음. 좌우 대칭이 켜져 있으면 반대쪽에도.
     const paintAt = (e) => {
       const cell = Render.cellAt(el.chart, state.layout, e.clientX, e.clientY);
       if (!cell) return;
-      const next = paintCell(state.pattern, cell.x, cell.y, state.selected);
+      const shape = circleCells(cell.x, cell.y, brushSize());
+      const cells = el.symmetry.value === 'off' ? shape : withMirror(shape, state.pattern.cols);
+      const next = paintCells(state.pattern, cells, state.selected);
       if (next !== state.pattern) {
         setState({ pattern: next, edited: true });
         drawChart();
       }
     };
+    el.brush.addEventListener('change', () => {
+      if (brushSize() > 1 && !el.paintMode.checked) el.paintMode.click(); // 도장을 고르면 칠하기 켜기
+    });
     el.chart.addEventListener('pointerdown', (e) => {
       if (!el.paintMode.checked || !state.pattern) return;
       if (state.selected == null) return showError('칠할 색을 아래 "사용 색상"에서 먼저 골라 주세요.');
@@ -331,7 +364,7 @@
       el.chart.setPointerCapture(e.pointerId);
       paintAt(e);
     });
-    el.chart.addEventListener('pointermove', (e) => { if (drawing) paintAt(e); });
+    el.chart.addEventListener('pointermove', (e) => { if (drawing && brushSize() === 1) paintAt(e); });
     const stop = () => {
       if (!drawing) return;
       drawing = false;

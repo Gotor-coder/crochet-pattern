@@ -69,6 +69,26 @@
         <label class="field inline">투명 부분 배경색 <input id="bgColor" type="color" value="#ffffff" /></label>
       </section>
 
+      <section>
+        <h2>5. 모양 다듬기</h2>
+        <label class="field">좌우 대칭
+          <select id="symmetry">
+            <option value="off" selected>끄기</option>
+            <option value="left">왼쪽 절반을 오른쪽에 복사</option>
+            <option value="right">오른쪽 절반을 왼쪽에 복사</option>
+          </select>
+        </label>
+        <p class="note">얼굴처럼 대칭인 그림에서 두 눈이 똑같아져요. 켜 두면 칠하기도 양쪽에 같이 칠해져요.</p>
+        <div class="field">위치 미세 조정 <span class="note">눈이 칸 가운데에 오도록 살짝 밀어 보세요</span></div>
+        <label class="field inline">좌 ↔ 우 <b id="offsetXText">0</b>
+          <input id="offsetX" type="range" min="-50" max="50" step="10" value="0" />
+        </label>
+        <label class="field inline">위 ↕ 아래 <b id="offsetYText">0</b>
+          <input id="offsetY" type="range" min="-50" max="50" step="10" value="0" />
+        </label>
+        <button id="offsetReset" type="button">위치 원래대로</button>
+      </section>
+
       <div id="summary" class="summary">이미지를 불러오면 도안 크기가 여기에 표시돼요.</div>
       <div id="error" class="error" hidden></div>
     </aside>
@@ -85,6 +105,16 @@
           <label class="check"><input id="showSymbols" type="checkbox" checked /> 기호</label>
           <label class="check"><input id="showGrid" type="checkbox" checked /> 격자</label>
           <label class="check"><input id="paintMode" type="checkbox" /> ✏️ 칠하기</label>
+          <label class="brush">붓
+            <select id="brush" title="칠하기 붓 모양">
+              <option value="1" selected>1칸</option>
+              <option value="3">● 3칸</option>
+              <option value="4">● 4칸</option>
+              <option value="5">● 5칸</option>
+              <option value="6">● 6칸</option>
+              <option value="7">● 7칸</option>
+            </select>
+          </label>
           <button id="undoBtn" disabled>↶ 되돌리기</button>
           <span class="save-group">
             <select id="saveFormat" title="저장 형식">
