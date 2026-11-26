@@ -5,6 +5,8 @@
   'use strict';
 
   const { symbolFor } = root.Pattern;
+  // 팔레트 색에 symbol 이 따로 있으면(방안뜨기의 채움/비움 등) 그걸, 없으면 A·B·C 기호
+  const symbolOf = (palette, i) => (palette[i] && palette[i].symbol != null ? palette[i].symbol : symbolFor(i));
   const { textColorFor, toHex } = root.Quantize;
 
   const MARGIN = 34; // 번호 표시 여백(px)
@@ -65,7 +67,7 @@
       for (let x = 0; x < cols; x++) {
         const c = indices[y * cols + x];
         ctx.fillStyle = textColors[c];
-        ctx.fillText(symbolFor(c), margin + (x + 0.5) * cellW, margin + (y + 0.5) * cellH + 0.5);
+        ctx.fillText(symbolOf(palette, c), margin + (x + 0.5) * cellW, margin + (y + 0.5) * cellH + 0.5);
       }
     }
   }
@@ -183,10 +185,10 @@
       ctx.fillStyle = textColorFor(color);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(symbolFor(i), x0 + 11, y0 + 12);
+      ctx.fillText(symbolOf(palette, i), x0 + 11, y0 + 12);
       ctx.textAlign = 'left';
       ctx.fillStyle = '#333';
-      ctx.fillText(`${toHex(color)}  ·  ${counts[i]}코`, x0 + 30, y0 + 12);
+      ctx.fillText(`${color.name || toHex(color)}  ·  ${counts[i]}${info.unit || "코"}`, x0 + 30, y0 + 12);
     });
     return out;
   }

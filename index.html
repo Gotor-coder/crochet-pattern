@@ -43,7 +43,7 @@
           <div>예상 게이지 (10×10cm): <b id="gaugeText">-</b></div>
           <label class="check"><input id="customGauge" type="checkbox" /> 내 게이지 직접 입력 (스와치 떠봤다면 추천)</label>
           <div id="customGaugeFields" class="row2" hidden>
-            <label class="field">10cm 당 코 수<input id="gaugeSts" type="number" min="1" max="60" step="0.5" /></label>
+            <label class="field"><span id="gaugeStsLabel">10cm 당 코 수</span><input id="gaugeSts" type="number" min="1" max="60" step="0.5" /></label>
             <label class="field">10cm 당 단 수<input id="gaugeRows" type="number" min="1" max="60" step="0.5" /></label>
           </div>
         </div>
@@ -139,6 +139,10 @@
 
       <div id="tab-rows" class="tabpane" hidden>
         <label class="check"><input id="leftHanded" type="checkbox" /> 왼손잡이 (방향 반대로)</label>
+        <p id="rowsHint" class="note filet-hint" hidden>
+          방안뜨기: <b>■ 채움</b> 한 칸 = 한길긴뜨기 3코, <b>□ 비움</b> 한 칸 = 사슬 2코 + 한길긴뜨기 1코.
+          매 단은 기둥 사슬 3코(한길긴뜨기 1코로 셈)로 시작하고, 칸 사이 경계의 한길긴뜨기는 이웃 칸과 함께 써요.
+        </p>
         <ol id="rowList" class="row-list"></ol>
       </div>
 
@@ -168,6 +172,7 @@
 
   <script src="js/gauge.js"></script>
   <script src="js/quantize.js"></script>
+  <script src="js/filet.js"></script>
   <script src="js/pattern.js"></script>
   <script src="js/render.js"></script>
   <script src="js/app.js"></script>

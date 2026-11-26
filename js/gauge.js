@@ -29,12 +29,22 @@
     [5.0, 14], [5.5, 13], [6.0, 12], [7.0, 10.5], [8.0, 9], [10.0, 7], [12.0, 6],
   ]);
 
-  // 뜨개 기법별: 코 수 보정, 단 수 = 코 수 × rowRatio
+  // 뜨개 기법별: 코 수 보정, 단 수 = 코 수 × rowRatio, unit = 도안 한 칸의 이름
+  // 방안뜨기(필레): 한 칸 = 한길긴뜨기 3코 폭(채움: 한길긴뜨기 3 / 비움: 사슬 2 + 한길긴뜨기 1), 1단 = 한길긴뜨기 높이
+  const FILET_STITCHES_PER_SQUARE = 3;
   const STITCHES = Object.freeze({
-    sc: { label: '짧은뜨기', stitchFactor: 1.0, rowRatio: 1.1 },
-    hdc: { label: '긴뜨기', stitchFactor: 0.9, rowRatio: 0.8 },
-    dc: { label: '한길긴뜨기', stitchFactor: 0.85, rowRatio: 0.57 },
+    sc: { label: '짧은뜨기', stitchFactor: 1.0, rowRatio: 1.1, unit: '코' },
+    hdc: { label: '긴뜨기', stitchFactor: 0.9, rowRatio: 0.8, unit: '코' },
+    dc: { label: '한길긴뜨기', stitchFactor: 0.85, rowRatio: 0.57, unit: '코' },
+    filet: {
+      label: '방안뜨기', stitchFactor: 0.95 / FILET_STITCHES_PER_SQUARE, rowRatio: 1.25, unit: '칸', filet: true,
+    },
   });
+
+  /** 방안뜨기 시작 사슬 수: 칸 수 × 3 + 1 (그다음 첫 단 기둥 사슬 3코는 따로) */
+  function filetFoundationChains(squares) {
+    return squares * FILET_STITCHES_PER_SQUARE + 1;
+  }
 
   const CM_PER_GAUGE = 10;
   const MAX_CELLS_PER_SIDE = 400;
@@ -93,7 +103,7 @@
     return Math.round(n * 10) / 10;
   }
 
-  const api = { HOOKS, STITCHES, MAX_CELLS_PER_SIDE, estimateGauge, computeGrid };
+  const api = { HOOKS, STITCHES, MAX_CELLS_PER_SIDE, estimateGauge, computeGrid, filetFoundationChains };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Gauge = api;
 })(typeof self !== 'undefined' ? self : this);

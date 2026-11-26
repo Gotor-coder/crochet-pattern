@@ -2,7 +2,8 @@
 (function () {
   'use strict';
 
-  const { HOOKS, STITCHES, estimateGauge, computeGrid } = window.Gauge;
+  const { HOOKS, STITCHES, estimateGauge, computeGrid, filetFoundationChains } = window.Gauge;
+  const { withDefaultFill, toggleFill, displayPalette, toFiletPattern } = window.Filet;
   const { quantizeImage, toHex, hexToRgb, textColorFor } = window.Quantize;
   const {
     symbolFor, rowInstructions, countColors, mergeColor,
@@ -30,6 +31,7 @@
     'originalImg', 'previewCanvas', 'totalText', 'mergeBox', 'selectedLabel', 'mergeTarget',
     'mergeBtn', 'clearSelect', 'legend', 'printImg', 'banner', 'saveFormat', 'detail', 'detailText',
     'brush', 'symmetry', 'offsetX', 'offsetY', 'offsetXText', 'offsetYText', 'offsetReset',
+    'gaugeStsLabel', 'rowsHint',
   ].forEach((id) => { el[id] = $(id); });
 
   let state = {
@@ -211,7 +213,8 @@
   function updateGaugeText() {
     try {
       const g = currentGauge();
-      el.gaugeText.textContent = `${g.stitchesPer10cm}코 × ${g.rowsPer10cm}단`;
+      el.gaugeText.textContent = `${g.stitchesPer10cm}${currentUnit()} × ${g.rowsPer10cm}단`;
+      el.gaugeStsLabel.textContent = `10cm 당 ${currentUnit()} 수`;
     } catch (err) {
       el.gaugeText.textContent = '-';
     }
@@ -233,10 +236,13 @@
         offsetY: Number(el.offsetY.value) / 100,
       });
       const mirrored = mirrorPattern({ cols: grid.cols, rows: grid.rows, indices: built.indices }, el.symmetry.value);
-      const { pattern, palette } = dropUnusedColors(mirrored, built.palette);
+      const cleaned = dropUnusedColors(mirrored, built.palette);
+      const filet = Boolean(STITCHES[el.stitch.value] && STITCHES[el.stitch.value].filet);
+      const pattern = cleaned.pattern;
+      const palette = filet ? withDefaultFill(cleaned.palette, hexToRgb(el.bgColor.value)) : cleaned.palette;
       const keepEdits = !fresh && state.edited && state.pattern;
       setState({
-        gauge, grid, palette, pattern,
+        gauge, grid, palette, pattern, filet,
         size: { width: el.widthCm.value, height: el.heightCm.value },
         history: keepEdits ? [...state.history, snapshot()].slice(-HISTORY_LIMIT) : [],
         edited: false, selected: null, doneRows: new Set(),
@@ -300,17 +306,32 @@
   function renderSummary() {
     const { grid, gauge, pattern, palette } = state;
     const custom = el.customGauge.checked;
+    const unit = currentUnit();
+    const total = (pattern.cols * pattern.rows).toLocaleString();
     el.summary.innerHTML =
-      `도안: 가로 <b>${grid.cols}코</b> × 세로 <b>${grid.rows}단</b><br>` +
+      `도안: 가로 <b>${grid.cols}${unit}</b> × 세로 <b>${grid.rows}단</b><br>` +
       `완성 예상 크기: 약 ${grid.actualWidthCm} × ${grid.actualHeightCm} cm<br>` +
-      `총 ${(pattern.cols * pattern.rows).toLocaleString()}코 · ${palette.length}가지 색<br>` +
-      `<small>게이지 ${gauge.stitchesPer10cm}코 × ${gauge.rowsPer10cm}단 / 10cm ` +
+      (state.filet
+        ? `총 ${total}칸 · 시작 사슬 <b>${filetFoundationChains(grid.cols)}코</b> + 첫 단 기둥 사슬 3코<br>`
+        : `총 ${total}코 · ${palette.length}가지 색<br>`) +
+      `<small>게이지 ${gauge.stitchesPer10cm}${unit} × ${gauge.rowsPer10cm}단 / 10cm ` +
       `${custom ? '(직접 입력)' : '(호수 기준 추정 — 실 굵기·손땀에 따라 달라요)'}</small>` +
-      (grid.cols < SMALL_PATTERN_COLS
-        ? `<br><small>⚠️ 가로 ${grid.cols}코는 작은 편이라 눈·입 같은 작은 부분이 한두 칸으로 줄어들어요. ` +
-          '더 선명하게 하려면 완성 크기를 키우거나 더 가는 바늘을 골라 보세요.</small>'
-        : '');
+      summaryNote(grid, unit);
   }
+
+  function summaryNote(grid, unit) {
+    if (state.filet) {
+      return '<br><small>방안뜨기는 한 칸이 한길긴뜨기 3코 폭이라 칸이 커요. ' +
+        '글자·실루엣처럼 단순한 무늬가 잘 어울리고, 아래 "사용 색상"에서 색마다 채움/비움을 바꿀 수 있어요.</small>';
+    }
+    if (grid.cols >= SMALL_PATTERN_COLS) return '';
+    return `<br><small>⚠️ 가로 ${grid.cols}${unit}는 작은 편이라 눈·입 같은 작은 부분이 한두 칸으로 줄어들어요. ` +
+      '더 선명하게 하려면 완성 크기를 키우거나 더 가는 바늘을 골라 보세요.</small>';
+  }
+
+  const currentUnit = () => (STITCHES[el.stitch.value] || STITCHES.sc).unit;
+  // 화면에 칠할 팔레트: 방안뜨기면 채움(진한 색)/비움(흰색), 아니면 실제 색
+  const shownPalette = () => (state.filet ? displayPalette(state.palette) : state.palette);
 
   function drawChart() {
     if (!state.pattern) return;
@@ -318,7 +339,7 @@
     const cellH = cellW * state.grid.cellAspect;
     const maxSide = Math.max(state.pattern.cols * cellW, state.pattern.rows * cellH) + 80;
     const pixelRatio = Math.max(1, Math.min(window.devicePixelRatio || 1, MAX_CANVAS_SIDE / maxSide));
-    const layout = Render.drawPattern(el.chart, state.pattern, state.palette, {
+    const layout = Render.drawPattern(el.chart, state.pattern, shownPalette(), {
       cellW,
       cellAspect: state.grid.cellAspect,
       showSymbols: el.showSymbols.checked,
@@ -331,7 +352,7 @@
   }
 
   function drawPreview() {
-    Render.drawPattern(el.previewCanvas, state.pattern, state.palette, {
+    Render.drawPattern(el.previewCanvas, state.pattern, shownPalette(), {
       cellW: 4, cellAspect: state.grid.cellAspect, showSymbols: false, showGrid: false, showNumbers: false,
     });
   }
@@ -378,6 +399,7 @@
 
   const snapshot = () => ({
     pattern: state.pattern, palette: state.palette, grid: state.grid, gauge: state.gauge, size: state.size,
+    filet: state.filet,
   });
 
   function pushHistory() {
@@ -419,7 +441,7 @@
   function renderLegend() {
     const counts = countColors(state.pattern, state.palette.length);
     const total = state.pattern.indices.length;
-    el.totalText.textContent = `(${state.palette.length}색)`;
+    el.totalText.textContent = state.filet ? filetTotals(counts) : `(${state.palette.length}색)`;
     el.legend.replaceChildren(...state.palette.map((color, i) => legendItem(color, i, counts[i], total)));
 
     const sel = state.selected;
@@ -445,7 +467,13 @@
 
     const meta = document.createElement('span');
     meta.className = 'meta';
-    meta.innerHTML = `${toHex(color)}<br><small>${count.toLocaleString()}코 · ${((count / total) * 100).toFixed(1)}%</small>`;
+    meta.innerHTML = `${toHex(color)}<br><small>${count.toLocaleString()}${currentUnit()} · ${((count / total) * 100).toFixed(1)}%</small>`;
+
+    if (state.filet) {
+      li.append(sw, meta, fillToggle(color, i));
+      li.addEventListener('click', () => selectColor(i));
+      return li;
+    }
 
     const picker = document.createElement('input');
     picker.type = 'color';
@@ -454,7 +482,7 @@
     picker.addEventListener('click', (e) => e.stopPropagation());
     picker.addEventListener('change', () => {
       pushHistory();
-      const palette = state.palette.map((c, j) => (j === i ? { ...hexToRgb(picker.value), count: c.count } : c));
+      const palette = state.palette.map((c, j) => (j === i ? { ...c, ...hexToRgb(picker.value) } : c));
       setState({ palette, edited: true });
       renderAll();
     });
@@ -464,12 +492,42 @@
     return li;
   }
 
+  // 방안뜨기: 원래 색마다 채움/비움 바꾸는 버튼
+  function fillToggle(color, i) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = color.filled ? 'fill-toggle is-filled' : 'fill-toggle';
+    btn.textContent = color.filled ? '■ 채움' : '□ 비움';
+    btn.title = '눌러서 채움/비움 바꾸기';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pushHistory();
+      setState({ palette: toggleFill(state.palette, i), edited: true });
+      renderAll();
+    });
+    return btn;
+  }
+
+  function filetTotals(counts) {
+    const filled = state.palette.reduce((s, c, i) => s + (c.filled ? counts[i] : 0), 0);
+    const open = counts.reduce((s, n) => s + n, 0) - filled;
+    return `(■ 채움 ${filled}칸 · □ 비움 ${open}칸)`;
+  }
+
+  // 단별 순서·저장에 쓸 도안: 방안뜨기면 채움/비움 두 가지로 바꿔서
+  const outputPattern = () => (state.filet
+    ? toFiletPattern(state.pattern, state.palette)
+    : { pattern: state.pattern, palette: state.palette });
+
   // ---------------- 단별 순서 ----------------
   function renderRows() {
     if (!state.pattern) return;
-    const rows = rowInstructions(state.pattern, { leftHanded: el.leftHanded.checked });
-    const fills = state.palette.map(toHex);
-    const textColors = state.palette.map(textColorFor);
+    const out = outputPattern();
+    el.rowsHint.hidden = !state.filet;
+    const rows = rowInstructions(out.pattern, { leftHanded: el.leftHanded.checked });
+    const fills = out.palette.map(toHex);
+    const textColors = out.palette.map(textColorFor);
+    const chipLabel = (color) => out.palette[color].name || symbolFor(color);
     const items = rows.map(({ row, direction, runs }) => {
       const li = document.createElement('li');
       li.classList.toggle('done', state.doneRows.has(row));
@@ -491,7 +549,7 @@
         chip.className = 'chip';
         chip.style.background = fills[color];
         chip.style.color = textColors[color];
-        chip.textContent = `${symbolFor(color)} ${count}`;
+        chip.textContent = `${chipLabel(color)} ${count}`;
         return chip;
       }));
       return li;
@@ -501,13 +559,17 @@
 
   // ---------------- 저장 / 인쇄 ----------------
   function exportCanvas() {
-    const { grid, gauge, pattern, palette } = state;
+    const { grid, gauge } = state;
+    const { pattern, palette } = outputPattern();
+    const unit = currentUnit();
     const hookLabel = el.hook.options[el.hook.selectedIndex].text;
     const stitchLabel = STITCHES[el.stitch.value].label;
+    const chainNote = state.filet ? ` · 시작 사슬 ${filetFoundationChains(grid.cols)}코 + 기둥 사슬 3코` : '';
     return Render.renderExport(pattern, palette, countColors(pattern, palette.length), {
       cellAspect: grid.cellAspect,
-      title: `코바늘 도안 · ${grid.cols}코 × ${grid.rows}단`,
-      subtitle: `${hookLabel} · ${stitchLabel} · 게이지 ${gauge.stitchesPer10cm}코×${gauge.rowsPer10cm}단/10cm · 완성 약 ${grid.actualWidthCm}×${grid.actualHeightCm}cm · 오른쪽 아래가 1단 1코`,
+      unit,
+      title: `코바늘 ${state.filet ? '방안뜨기 ' : ''}도안 · ${grid.cols}${unit} × ${grid.rows}단`,
+      subtitle: `${hookLabel} · ${stitchLabel} · 게이지 ${gauge.stitchesPer10cm}${unit}×${gauge.rowsPer10cm}단/10cm · 완성 약 ${grid.actualWidthCm}×${grid.actualHeightCm}cm${chainNote} · 오른쪽 아래가 1단 1${unit}`,
     });
   }
 
