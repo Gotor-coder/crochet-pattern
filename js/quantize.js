@@ -1,59 +1,25 @@
 /*
- * 이미지 → 칸 단위 평균색(다운샘플) → k-means 색 줄이기.
+ * 이미지 → 칸 도안 색 정하기.
+ * 1) 원본 픽셀에서 k-means로 "깨끗한" 대표 색(팔레트)을 뽑고
+ * 2) 원본 픽셀 하나하나를 팔레트 색으로 바꾼 뒤
+ * 3) 칸마다 가장 많이 차지한 색을 고름. 단, 눈·입처럼 전체에서 드문 색은 가중치를 줘서 살림.
+ * 칸 평균색을 쓰면 경계가 섞여 뭉개지므로 평균을 쓰지 않는다.
  * 순수 함수만 포함 (DOM 의존 없음). window.Quantize / require 둘 다 지원.
  */
 (function (root) {
   'use strict';
 
-  const ALPHA_THRESHOLD = 0.5; // 칸의 절반 이상이 투명하면 배경색으로 처리
+  const ALPHA_THRESHOLD = 128; // 이보다 투명하면 배경색으로 처리
   const MAX_ITERATIONS = 24;
   const MAX_SAMPLES = 6000;
+  const PALETTE_SAMPLE_PIXELS = 40000; // 팔레트 뽑을 때 읽는 원본 픽셀 수(대략)
+  const DETAIL_EXPONENT_SCALE = 0.6; // detail 1 일 때 드문 색 가중치 지수
+  const DEFAULT_DETAIL = 0.6;
+  const WHITE_BG = Object.freeze({ r: 255, g: 255, b: 255 });
 
-  /**
-   * RGBA 픽셀 배열을 cols × rows 칸으로 나눠 각 칸의 평균색을 구함.
-   * 투명한 부분은 background 색으로 합성.
-   * @returns {Array<{r:number,g:number,b:number}>} 길이 cols*rows, 위→아래, 왼→오른 순서
-   */
-  function averageCells(data, srcW, srcH, cols, rows, background) {
-    if (data.length < srcW * srcH * 4) throw new Error('픽셀 데이터 크기가 맞지 않습니다.');
-    const bg = background || { r: 255, g: 255, b: 255 };
-    const cells = new Array(cols * rows);
-    const cellW = srcW / cols;
-    const cellH = srcH / rows;
-
-    for (let cy = 0; cy < rows; cy++) {
-      const y0 = Math.floor(cy * cellH);
-      const y1 = Math.max(y0 + 1, Math.floor((cy + 1) * cellH));
-      for (let cx = 0; cx < cols; cx++) {
-        const x0 = Math.floor(cx * cellW);
-        const x1 = Math.max(x0 + 1, Math.floor((cx + 1) * cellW));
-        cells[cy * cols + cx] = averageBlock(data, srcW, x0, Math.min(x1, srcW), y0, Math.min(y1, srcH), bg);
-      }
-    }
-    return cells;
-  }
-
-  function averageBlock(data, srcW, x0, x1, y0, y1, bg) {
-    let r = 0, g = 0, b = 0, a = 0, n = 0;
-    for (let y = y0; y < y1; y++) {
-      for (let x = x0; x < x1; x++) {
-        const i = (y * srcW + x) * 4;
-        const alpha = data[i + 3] / 255;
-        r += data[i] * alpha;
-        g += data[i + 1] * alpha;
-        b += data[i + 2] * alpha;
-        a += alpha;
-        n++;
-      }
-    }
-    if (n === 0 || a / n < ALPHA_THRESHOLD) return { ...bg };
-    // 반투명 부분은 배경색과 섞기
-    const cover = a / n;
-    return {
-      r: Math.round((r / a) * cover + bg.r * (1 - cover)),
-      g: Math.round((g / a) * cover + bg.g * (1 - cover)),
-      b: Math.round((b / a) * cover + bg.b * (1 - cover)),
-    };
+  function pixelAt(data, i, bg) {
+    if (data[i + 3] < ALPHA_THRESHOLD) return bg;
+    return { r: data[i], g: data[i + 1], b: data[i + 2] };
   }
 
   // ---------- 색 공간 변환 (sRGB ↔ CIE Lab) : 사람 눈에 가까운 색 거리 ----------
@@ -172,16 +138,79 @@
   }
 
   /**
-   * 칸 색 목록을 최대 colorCount 가지 색으로 줄임.
+   * RGBA 원본(srcW×srcH)을 cols×rows 칸 도안으로 변환.
+   * @param opts {colors, background, detail(0~1: 작은 부분 살리기 정도), seed}
    * @returns {{palette: Array<{r,g,b,count}>, indices: number[]}} 팔레트는 많이 쓰인 순
    */
-  function quantize(cells, colorCount, seed) {
-    const k = Math.max(1, Math.min(Math.floor(colorCount), cells.length));
-    const rand = seededRandom(seed == null ? 1234 : seed);
-    const points = cells.map(rgbToLab);
-    const centers = kmeans(points, k, rand);
-    const raw = points.map((p) => nearestIndex(p, centers));
+  function quantizeImage(data, srcW, srcH, cols, rows, opts) {
+    if (data.length < srcW * srcH * 4) throw new Error('픽셀 데이터 크기가 맞지 않습니다.');
+    const o = opts || {};
+    const bg = o.background || WHITE_BG;
+    const detail = o.detail == null ? DEFAULT_DETAIL : Math.max(0, Math.min(1, o.detail));
+    const rand = seededRandom(o.seed == null ? 1234 : o.seed);
+
+    const samples = samplePalettePoints(data, srcW, srcH, bg);
+    const k = Math.max(1, Math.min(Math.floor(o.colors || 6), samples.length));
+    const centers = kmeans(samples, k, rand);
+    const nearest = makeNearestLookup(centers);
+
+    const { cellCounts, totals } = countCellColors(data, srcW, srcH, cols, rows, k, bg, nearest);
+    const weights = rarityWeights(totals, detail);
+    const raw = new Array(cols * rows);
+    for (let c = 0; c < cols * rows; c++) raw[c] = pickCellColor(cellCounts, c * k, k, weights);
     return compactPalette(centers.map(labToRgb), raw);
+  }
+
+  // 팔레트용 표본: 원본을 일정 간격으로 훑어 Lab 점 목록 생성
+  function samplePalettePoints(data, srcW, srcH, bg) {
+    const step = Math.max(1, Math.floor(Math.sqrt((srcW * srcH) / PALETTE_SAMPLE_PIXELS)));
+    const points = [];
+    for (let y = 0; y < srcH; y += step) {
+      for (let x = 0; x < srcW; x += step) points.push(rgbToLab(pixelAt(data, (y * srcW + x) * 4, bg)));
+    }
+    return points;
+  }
+
+  // 같은 색을 여러 번 계산하지 않도록 RGB(각 6비트) → 팔레트 번호 캐시
+  function makeNearestLookup(centers) {
+    const cache = new Int16Array(1 << 18).fill(-1);
+    return ({ r, g, b }) => {
+      const key = ((r >> 2) << 12) | ((g >> 2) << 6) | (b >> 2);
+      if (cache[key] < 0) cache[key] = nearestIndex(rgbToLab({ r, g, b }), centers);
+      return cache[key];
+    };
+  }
+
+  // 칸마다 팔레트 색별 픽셀 수, 그리고 전체 픽셀 수
+  function countCellColors(data, srcW, srcH, cols, rows, k, bg, nearest) {
+    const cellCounts = new Uint32Array(cols * rows * k);
+    const totals = new Float64Array(k);
+    for (let y = 0; y < srcH; y++) {
+      const cy = Math.min(rows - 1, Math.floor((y * rows) / srcH));
+      for (let x = 0; x < srcW; x++) {
+        const cx = Math.min(cols - 1, Math.floor((x * cols) / srcW));
+        const color = nearest(pixelAt(data, (y * srcW + x) * 4, bg));
+        cellCounts[(cy * cols + cx) * k + color]++;
+        totals[color]++;
+      }
+    }
+    return { cellCounts, totals };
+  }
+
+  // 전체에서 드문 색일수록 큰 가중치 (detail 0 이면 모두 1 → 단순 다수결)
+  function rarityWeights(totals, detail) {
+    const sum = totals.reduce((s, v) => s + v, 0) || 1;
+    const exponent = detail * DETAIL_EXPONENT_SCALE;
+    return Array.from(totals, (t) => (t > 0 ? Math.pow(t / sum, -exponent) : 0));
+  }
+
+  function pickCellColor(cellCounts, offset, k, weights) {
+    let best = 0, bestScore = -1;
+    for (let i = 0; i < k; i++) {
+      const score = cellCounts[offset + i] * weights[i];
+      if (score > bestScore) { bestScore = score; best = i; }
+    }
+    return best;
   }
 
   // 안 쓰인 색 제거, 같은 RGB로 반올림된 색 합치기, 사용량 순 정렬
@@ -220,7 +249,7 @@
     return rgbToLab({ r, g, b })[0] > 60 ? '#222' : '#fff';
   }
 
-  const api = { averageCells, quantize, rgbToLab, labToRgb, toHex, hexToRgb, textColorFor };
+  const api = { quantizeImage, rgbToLab, labToRgb, toHex, hexToRgb, textColorFor };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Quantize = api;
 })(typeof self !== 'undefined' ? self : this);

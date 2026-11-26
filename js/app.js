@@ -3,12 +3,15 @@
   'use strict';
 
   const { HOOKS, STITCHES, estimateGauge, computeGrid } = window.Gauge;
-  const { averageCells, quantize, toHex, hexToRgb, textColorFor } = window.Quantize;
+  const { quantizeImage, toHex, hexToRgb, textColorFor } = window.Quantize;
   const { symbolFor, rowInstructions, countColors, paintCell, mergeColor } = window.Pattern;
   const Render = window.Render;
 
   const DEFAULT_HOOK_MM = 4.0;
-  const SAMPLE_PER_CELL = 8; // 칸 하나 당 원본에서 읽을 픽셀 수(한 변)
+  const SAMPLE_PER_CELL_MIN = 4; // 칸 하나 당 원본에서 읽을 픽셀 수(한 변)
+  const SAMPLE_PER_CELL_MAX = 16;
+  const MAX_WORK_PIXELS = 4000000; // 한 번에 처리할 원본 픽셀 상한 (속도)
+  const SMALL_PATTERN_COLS = 40; // 이보다 작으면 작은 부분이 사라질 수 있다고 안내
   const MAX_CANVAS_SIDE = 8000;
   const MAX_FILE_BYTES = 30 * 1024 * 1024;
   const DEBOUNCE_MS = 250;
@@ -22,7 +25,7 @@
     'colorCountText', 'bgColor', 'summary', 'error', 'zoom', 'showSymbols', 'showGrid', 'paintMode',
     'undoBtn', 'savePng', 'printBtn', 'chartWrap', 'empty', 'chart', 'leftHanded', 'rowList',
     'originalImg', 'previewCanvas', 'totalText', 'mergeBox', 'selectedLabel', 'mergeTarget',
-    'mergeBtn', 'clearSelect', 'legend', 'printImg', 'banner', 'saveFormat',
+    'mergeBtn', 'clearSelect', 'legend', 'printImg', 'banner', 'saveFormat', 'detail', 'detailText',
   ].forEach((id) => { el[id] = $(id); });
 
   let state = {
@@ -99,6 +102,8 @@
     });
     el.keepRatio.addEventListener('change', () => { syncRatio('width'); regenerateSoon(); });
     el.colorCount.addEventListener('input', () => { el.colorCountText.textContent = el.colorCount.value; regenerateSoon(); });
+    el.detail.addEventListener('input', () => { el.detailText.textContent = detailLabel(el.detail.value); regenerateSoon(); });
+    el.detailText.textContent = detailLabel(el.detail.value);
     el.bgColor.addEventListener('input', regenerateSoon);
 
     el.zoom.addEventListener('input', drawChart);
@@ -175,6 +180,7 @@
     }
   }
   const round1 = (n) => Math.round(n * 10) / 10;
+  const detailLabel = (v) => (v < 20 ? '약하게' : v < 70 ? '보통' : '강하게');
 
   // ---------------- 게이지 ----------------
   function currentGauge() {
@@ -201,8 +207,11 @@
     try {
       const gauge = currentGauge();
       const grid = computeGrid(el.widthCm.value, el.heightCm.value, gauge);
-      const cells = sampleCells(state.image, grid, hexToRgb(el.bgColor.value));
-      const { palette, indices } = quantize(cells, Number(el.colorCount.value));
+      const { palette, indices } = buildPattern(state.image, grid, {
+        colors: Number(el.colorCount.value),
+        background: hexToRgb(el.bgColor.value),
+        detail: Number(el.detail.value) / 100,
+      });
       const keepEdits = !fresh && state.edited && state.pattern;
       setState({
         gauge, grid, palette, pattern: { cols: grid.cols, rows: grid.rows, indices },
@@ -230,9 +239,12 @@
     el.zoom.value = String(Math.max(ZOOM_MIN, Math.min(ZOOM_DEFAULT, fit)));
   }
 
-  function sampleCells(img, grid, background) {
-    const sw = Math.max(grid.cols, Math.min(img.naturalWidth, grid.cols * SAMPLE_PER_CELL));
-    const sh = Math.max(grid.rows, Math.min(img.naturalHeight, grid.rows * SAMPLE_PER_CELL));
+  // 칸 하나 당 원본 픽셀을 여러 개(한 변 4~16개) 읽어서 칸 안의 색 비율을 셈
+  function buildPattern(img, grid, opts) {
+    const perCell = Math.max(SAMPLE_PER_CELL_MIN, Math.min(SAMPLE_PER_CELL_MAX,
+      Math.floor(Math.sqrt(MAX_WORK_PIXELS / (grid.cols * grid.rows)))));
+    const sw = Math.max(grid.cols, Math.min(img.naturalWidth, grid.cols * perCell));
+    const sh = Math.max(grid.rows, Math.min(img.naturalHeight, grid.rows * perCell));
     const canvas = document.createElement('canvas');
     canvas.width = sw;
     canvas.height = sh;
@@ -240,7 +252,7 @@
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, 0, 0, sw, sh);
     const { data } = ctx.getImageData(0, 0, sw, sh);
-    return averageCells(data, sw, sh, grid.cols, grid.rows, background);
+    return quantizeImage(data, sw, sh, grid.cols, grid.rows, opts);
   }
 
   // ---------------- 그리기 ----------------
@@ -267,7 +279,11 @@
       `완성 예상 크기: 약 ${grid.actualWidthCm} × ${grid.actualHeightCm} cm<br>` +
       `총 ${(pattern.cols * pattern.rows).toLocaleString()}코 · ${palette.length}가지 색<br>` +
       `<small>게이지 ${gauge.stitchesPer10cm}코 × ${gauge.rowsPer10cm}단 / 10cm ` +
-      `${custom ? '(직접 입력)' : '(호수 기준 추정 — 실 굵기·손땀에 따라 달라요)'}</small>`;
+      `${custom ? '(직접 입력)' : '(호수 기준 추정 — 실 굵기·손땀에 따라 달라요)'}</small>` +
+      (grid.cols < SMALL_PATTERN_COLS
+        ? `<br><small>⚠️ 가로 ${grid.cols}코는 작은 편이라 눈·입 같은 작은 부분이 한두 칸으로 줄어들어요. ` +
+          '더 선명하게 하려면 완성 크기를 키우거나 더 가는 바늘을 골라 보세요.</small>'
+        : '');
   }
 
   function drawChart() {

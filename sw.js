@@ -1,6 +1,6 @@
 // 오프라인 실행용 서비스 워커: 앱 파일을 저장해 두고 인터넷 없이도 열리게 함.
 // 앱 파일을 고치면 CACHE_VERSION 숫자를 올려야 폰에 새 버전이 반영됨.
-const CACHE_VERSION = 'crochet-v1';
+const CACHE_VERSION = 'crochet-v2';
 const APP_FILES = [
   './',
   './index.html',
